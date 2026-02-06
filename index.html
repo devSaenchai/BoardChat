@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Live Sketch Board</title>
+    <script src="https://cdn.jsdelivr.net"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
+        #toolbar {
+            position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; background: rgba(255,255,255,0.15);
+            padding: 8px 15px; border-radius: 25px; backdrop-filter: blur(10px); z-index: 100;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        button {
+            padding: 10px 18px; border: none; border-radius: 15px;
+            background: #ffffff; color: #000; font-weight: 600; cursor: pointer; transition: 0.2s;
+        }
+        button.active { background: #007AFF; color: #fff; }
+        canvas { display: block; background: #ffffff; touch-action: none; cursor: crosshair; }
+    </style>
+</head>
+<body>
+
+    <div id="toolbar">
+        <button id="drawBtn" class="active">Pen</button>
+        <button id="eraseBtn">Eraser</button>
+        <button onclick="clearBoard()" style="background: #FF3B30; color: #fff;">Clear</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // --- 1. CONFIGURATION (Replace with your keys) ---
+        const SB_URL = 'https://YOUR_PROJECT_ID.supabase.co';
+        const SB_KEY = 'YOUR_ANON_KEY';
+        const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
+        const channel = supabaseClient.channel('sketch-room');
+
+        // --- 2. SETUP ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        let mode = 'draw'; 
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // UI Controls
+        document.getElementById('drawBtn').onclick = () => { mode = 'draw'; updateUI(); };
+        document.getElementById('eraseBtn').onclick = () => { mode = 'erase'; updateUI(); };
+        function updateUI() {
+            document.getElementById('drawBtn').className = mode === 'draw' ? 'active' : '';
+            document.getElementById('eraseBtn').className = mode === 'erase' ? 'active' : '';
+        }
+
+        // --- 3. DRAWING & SYNC LOGIC ---
+        function getCoords(e) {
+            const t = e.touches ? e.touches[0] : e;
+            return { x: t.clientX / canvas.width, y: t.clientY / canvas.height }; // Normalize to %
+        }
+
+        function drawLocal(x, y, m, start) {
+            const realX = x * canvas.width;
+            const realY = y * canvas.height;
+            ctx.lineWidth = m === 'draw' ? 3 : 40;
+            ctx.globalCompositeOperation = m === 'draw' ? 'source-over' : 'destination-out';
+            ctx.strokeStyle = '#000';
+
+            if (start) ctx.beginPath();
+            ctx.lineTo(realX, realY);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(realX, realY);
+        }
+
+        const handleStart = (e) => { isDrawing = true; const c = getCoords(e); drawLocal(c.x, c.y, mode, true); sync(c.x, c.y, true); };
+        const handleMove = (e) => { if(!isDrawing) return; const c = getCoords(e); drawLocal(c.x, c.y, mode, false); sync(c.x, c.y, false); };
+        const handleEnd = () => { isDrawing = false; ctx.beginPath(); };
+
+        // Real-time Sync
+        function sync(x, y, start) {
+            channel.send({ type: 'broadcast', event: 'stroke', payload: { x, y, mode, start } });
+        }
+
+        channel.on('broadcast', { event: 'stroke' }, ({ payload }) => {
+            drawLocal(payload.x, payload.y, payload.mode, payload.start);
+        }).subscribe();
+
+        function clearBoard() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            channel.send({ type: 'broadcast', event: 'clear' });
+        }
+        channel.on('broadcast', { event: 'clear' }, () => ctx.clearRect(0, 0, canvas.width, canvas.height));
+
+        // Listeners
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('touchend', handleEnd);
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+    </script>
+</body>
+</html>
