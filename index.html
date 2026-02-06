@@ -68,20 +68,33 @@ canvas.height = window.innerHeight;
 
 let drawing=false;
 let tool="draw";
+let lastX=null;
+let lastY=null;
 
 function drawStroke(x,y,t){
 
- if(t==="erase"){
-   ctx.globalCompositeOperation="destination-out";
-   ctx.beginPath();
-   ctx.arc(x,y,15,0,Math.PI*2);
-   ctx.fill();
- }else{
-   ctx.globalCompositeOperation="source-over";
-   ctx.fillStyle="white";
-   ctx.fillRect(x,y,4,4);
+ if(lastX===null){
+   lastX=x;
+   lastY=y;
  }
 
+ ctx.beginPath();
+ ctx.moveTo(lastX,lastY);
+ ctx.lineTo(x,y);
+ ctx.lineCap="round";
+ ctx.lineWidth=(t==="erase")?30:4;
+
+ if(t==="erase"){
+   ctx.globalCompositeOperation="destination-out";
+ }else{
+   ctx.globalCompositeOperation="source-over";
+   ctx.strokeStyle="white";
+ }
+
+ ctx.stroke();
+
+ lastX=x;
+ lastY=y;
 }
 
 function send(x,y,t){
@@ -99,14 +112,19 @@ onChildAdded(strokesRef,(snap)=>{
 
 canvas.addEventListener("touchstart",()=>{
  drawing=true;
+ lastX=null;
+ lastY=null;
 });
 
 canvas.addEventListener("touchend",()=>{
  drawing=false;
+ lastX=null;
+ lastY=null;
 });
 
 canvas.addEventListener("touchmove",(e)=>{
  if(!drawing)return;
+
  let rect=canvas.getBoundingClientRect();
  let x=e.touches[0].clientX-rect.left;
  let y=e.touches[0].clientY-rect.top;
