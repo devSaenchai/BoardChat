@@ -14,13 +14,15 @@
             overflow: hidden; 
             margin: 0; 
             background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
 
         #toolbar {
             position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
             display: flex; gap: 8px; background: rgba(0,0,0,0.8);
-            padding: 8px; border-radius: 50px; z-index: 999;
+            padding: 8px 20px; border-radius: 50px; z-index: 999;
             border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
         button { padding: 12px 20px; border: none; border-radius: 25px; background: #fff; font-weight: bold; cursor: pointer; }
@@ -29,7 +31,7 @@
         canvas { 
             display: block; 
             background: #fff; 
-            touch-action: none; /* Disable all browser gestures */
+            touch-action: none; /* CRITICAL FIX: Disable all browser gestures */
             z-index: 1;
         }
     </style>
@@ -49,7 +51,8 @@
         const SB_URL = 'https://sujawkmwxhdqoaadyewh.supabase.co';
         const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN1amF3a213eGhkcW9hYWR5ZXdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzNTkxMTUsImV4cCI6MjA4NTkzNTExNX0.Yy2D63Vshq5PgH-IPOADRW-ShWcPaXZ4G-6VjOT7VIg';
         const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
-        const channel = supabaseClient.channel('boardchat');
+        // Using a dedicated channel name for robust sync
+        const channel = supabaseClient.channel('boardchat-live-channel');
 
         // --- 2. CANVAS SETUP ---
         const canvas = document.getElementById('sketchBoard');
@@ -66,28 +69,50 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // --- 3. TOUCH LOGIC ---
-        function getTouchPos(e) {
-            const touch = e.touches ? e.touches : e;
+        // --- 3. UI CONTROLS ---
+        document.getElementById('drawBtn').onclick = () => { mode = 'draw'; updateUI(); };
+        document.getElementById('eraseBtn').onclick = () => { mode = 'erase'; updateUI(); };
+
+        function updateUI() {
+            document.getElementById('drawBtn').className = mode === 'draw' ? 'active' : '';
+            document.getElementById('eraseBtn').className = mode === 'erase' ? 'active' : '';
+        }
+
+        // --- 4. DRAWING LOGIC (Mobile Optimized) ---
+        function getPos(e) {
+            const t = e.touches ? e.touches[0] : e; // Use the first touch if multiple
             const rect = canvas.getBoundingClientRect();
             return {
-                x: (touch.clientX - rect.left) / canvas.width,
-                y: (touch.clientY - rect.top) / canvas.height
+                x: (t.clientX - rect.left) / canvas.width,
+                y: (t.clientY - rect.top) / canvas.height
             };
         }
 
-        const handleStart = (e) => {
-            e.preventDefault(); // STOP MOBILE SCROLL
-            isDrawing = true;
-            const p = getTouchPos(e);
+        function drawLine(x, y, m, start) {
+            const rx = x * canvas.width, ry = y * canvas.height;
+            ctx.lineWidth = m === 'draw' ? 5 : 40;
+            ctx.globalCompositeOperation = m === 'draw' ? 'source-over' : 'destination-out';
+            ctx.strokeStyle = '#000';
+
+            if (start) ctx.beginPath();
+            ctx.lineTo(rx, ry);
+            ctx.stroke();
             ctx.beginPath();
+            ctx.moveTo(rx, ry);
+        }
+
+        const handleStart = (e) => {
+            e.preventDefault(); // Stop mobile scrolling
+            isDrawing = true;
+            const p = getPos(e);
+            ctx.beginPath(); // Ensure a fresh line starts here
             sync(p.x, p.y, mode, true);
         };
 
         const handleMove = (e) => {
             if(!isDrawing) return;
-            e.preventDefault(); // STOP MOBILE SCROLL
-            const p = getTouchPos(e);
+            e.preventDefault(); // Stop mobile scrolling
+            const p = getPos(e);
             
             ctx.lineWidth = mode === 'draw' ? 5 : 40;
             ctx.globalCompositeOperation = mode === 'draw' ? 'source-over' : 'destination-out';
@@ -97,32 +122,28 @@
             sync(p.x, p.y, mode, false);
         };
 
-        const handleEnd = () => { isDrawing = false; };
+        const handleEnd = () => { isDrawing = false; ctx.beginPath(); };
 
-        // --- 4. SYNC ---
+        // --- 5. REALTIME SYNC ---
         function sync(x, y, m, s) {
             channel.send({ type: 'broadcast', event: 'stroke', payload: { x, y, m, s } });
         }
 
         channel.on('broadcast', { event: 'stroke' }, ({ payload }) => {
-            const rx = payload.x * canvas.width;
-            const ry = payload.y * canvas.height;
-            ctx.lineWidth = payload.m === 'draw' ? 5 : 40;
-            ctx.globalCompositeOperation = payload.m === 'draw' ? 'source-over' : 'destination-out';
-            if (payload.s) ctx.beginPath();
-            ctx.lineTo(rx, ry);
-            ctx.stroke();
-        }).on('broadcast', { event: 'clear' }, () => ctx.clearRect(0,0,canvas.width,canvas.height)).subscribe();
+            drawLine(payload.x, payload.y, payload.m, payload.s);
+        }).on('broadcast', { event: 'clear' }, () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }).subscribe();
 
         function clearBoard() {
-            ctx.clearRect(0,0,canvas.width,canvas.height);
-            channel.send({ type: 'broadcast', event: 'clear' });
+            if(confirm("Clear board for everyone?")) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                channel.send({ type: 'broadcast', event: 'clear' });
+            }
         }
 
-        // --- 5. LISTENERS ---
-        document.getElementById('drawBtn').onclick = () => { mode = 'draw'; document.getElementById('drawBtn').className='active'; document.getElementById('eraseBtn').className=''; };
-        document.getElementById('eraseBtn').onclick = () => { mode = 'erase'; document.getElementById('eraseBtn').className='active'; document.getElementById('drawBtn').className=''; };
-
+        // --- 6. EVENT LISTENERS ---
+        // {passive: false} is crucial for mobile drawing performance
         canvas.addEventListener('touchstart', handleStart, {passive: false});
         canvas.addEventListener('touchmove', handleMove, {passive: false});
         canvas.addEventListener('touchend', handleEnd);
