@@ -1,135 +1,124 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BoardChat</title>
 
 <style>
 body{
- margin:0;
- background:#111;
- overflow:hidden;
- touch-action:none;
-}
-canvas{
- background:black;
- display:block;
-}
-#toolbar{
- position:fixed;
- top:10px;
- left:50%;
- transform:translateX(-50%);
- z-index:10;
+margin:0;
+background:black;
+display:flex;
+flex-direction:column;
+align-items:center;
+font-family:sans-serif;
+color:white;
 }
 button{
- font-size:16px;
- padding:10px;
- margin:3px;
- border:none;
- border-radius:8px;
+margin:10px;
+padding:10px 20px;
+font-size:16px;
+border:none;
+border-radius:10px;
+}
+canvas{
+background:black;
+touch-action:none;
 }
 </style>
 </head>
 
 <body>
 
-<div id="toolbar">
-<button id="clearBtn">🧹 Clear Board</button>
-</div>
+<h3>BoardChat</h3>
+<button id="clear">🧹 Clear Board</button>
 
-<canvas id="board"></canvas>
+<canvas id="board" width="360" height="600"></canvas>
 
 <script type="module">
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-import { getDatabase, ref, push, onChildAdded, remove, onValue } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
+import { getDatabase, ref, set, onValue, remove } 
+from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
 
 const firebaseConfig = {
- apiKey: "AIzaSyD_irdW_k6Hmp7PLzP9j7rKgWks9yya8xo",
- authDomain: "boardchat-e9cfb.firebaseapp.com",
- databaseURL: "https://boardchat-e9cfb-default-rtdb.asia-southeast1.firebasedatabase.app",
- projectId: "boardchat-e9cfb",
- storageBucket: "boardchat-e9cfb.firebasestorage.app",
- messagingSenderId: "934254339524",
- appId: "1:934254339524:web:4abd1c01064be680b57091"
+apiKey:"AIzaSyD_irdW_k6Hmp7PLzP9j7rKgWks9yya8xo",
+authDomain:"boardchat-e9cfb.firebaseapp.com",
+databaseURL:"https://boardchat-e9cfb-default-rtdb.asia-southeast1.firebasedatabase.app",
+projectId:"boardchat-e9cfb",
+storageBucket:"boardchat-e9cfb.firebasestorage.app",
+messagingSenderId:"934254339524",
+appId:"1:934254339524:web:4abd1c01064be680b57091"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-const strokesRef = ref(db,"board/strokes");
-const clearRef = ref(db,"board/clear");
+const canvas=document.getElementById("board");
+const ctx=canvas.getContext("2d");
 
-const canvas = document.getElementById("board");
-const ctx = canvas.getContext("2d");
+ctx.strokeStyle="white";
+ctx.lineWidth=4;
+ctx.lineCap="round";
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const userId=crypto.randomUUID();
 
 let drawing=false;
-let lastX=null;
-let lastY=null;
+let strokeId=null;
+let currentStroke=[];
 
-function drawStroke(x,y){
-
- if(lastX===null){
-   lastX=x;
-   lastY=y;
- }
-
- ctx.beginPath();
- ctx.moveTo(lastX,lastY);
- ctx.lineTo(x,y);
- ctx.lineCap="round";
- ctx.lineWidth=4;
- ctx.strokeStyle="white";
- ctx.stroke();
-
- lastX=x;
- lastY=y;
-}
-
-function send(x,y){
- push(strokesRef,{x,y});
-}
-
-onChildAdded(strokesRef,(snap)=>{
- let d=snap.val();
- drawStroke(d.x,d.y);
-});
-
-onValue(clearRef,()=>{
- ctx.clearRect(0,0,canvas.width,canvas.height);
-});
-
-document.getElementById("clearBtn").onclick=()=>{
- remove(strokesRef);
- push(clearRef,{time:Date.now()});
+function getPos(e){
+const rect=canvas.getBoundingClientRect();
+return{
+x:e.clientX-rect.left,
+y:e.clientY-rect.top
 };
+}
 
-canvas.addEventListener("touchstart",()=>{
- drawing=true;
- lastX=null;
- lastY=null;
+canvas.addEventListener("pointerdown",e=>{
+drawing=true;
+strokeId=userId+"_"+Date.now();
+currentStroke=[];
 });
 
-canvas.addEventListener("touchend",()=>{
- drawing=false;
- lastX=null;
- lastY=null;
+canvas.addEventListener("pointermove",e=>{
+if(!drawing)return;
+
+const pos=getPos(e);
+currentStroke.push(pos);
+
+set(ref(db,"boards/mainBoard/strokes/"+strokeId),{
+user:userId,
+points:currentStroke
+});
 });
 
-canvas.addEventListener("touchmove",(e)=>{
- if(!drawing)return;
+canvas.addEventListener("pointerup",()=>drawing=false);
+canvas.addEventListener("pointerleave",()=>drawing=false);
 
- let rect=canvas.getBoundingClientRect();
- let x=e.touches[0].clientX-rect.left;
- let y=e.touches[0].clientY-rect.top;
+onValue(ref(db,"boards/mainBoard/strokes"),snap=>{
 
- drawStroke(x,y);
- send(x,y);
+ctx.clearRect(0,0,canvas.width,canvas.height);
+
+snap.forEach(child=>{
+const pts=child.val().points;
+if(!pts)return;
+
+ctx.beginPath();
+
+for(let i=0;i<pts.length;i++){
+if(i===0)ctx.moveTo(pts[i].x,pts[i].y);
+else ctx.lineTo(pts[i].x,pts[i].y);
+}
+
+ctx.stroke();
 });
+
+});
+
+document.getElementById("clear").onclick=()=>{
+remove(ref(db,"boards/mainBoard/strokes"));
+};
 
 </script>
 
