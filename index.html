@@ -35,8 +35,7 @@ button{
 <body>
 
 <div id="toolbar">
-<button onclick="tool='draw'">✏️ Pencil</button>
-<button onclick="tool='erase'">🧽 Eraser</button>
+<button id="clearBtn">🧹 Clear Board</button>
 </div>
 
 <canvas id="board"></canvas>
@@ -44,7 +43,7 @@ button{
 <script type="module">
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-import { getDatabase, ref, push, onChildAdded } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
+import { getDatabase, ref, push, onChildAdded, remove, onValue } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
 
 const firebaseConfig = {
  apiKey: "AIzaSyD_irdW_k6Hmp7PLzP9j7rKgWks9yya8xo",
@@ -58,7 +57,9 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
-const strokesRef = ref(db,"board");
+
+const strokesRef = ref(db,"board/strokes");
+const clearRef = ref(db,"board/clear");
 
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
@@ -67,11 +68,10 @@ canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 let drawing=false;
-let tool="draw";
 let lastX=null;
 let lastY=null;
 
-function drawStroke(x,y,t){
+function drawStroke(x,y){
 
  if(lastX===null){
    lastX=x;
@@ -82,33 +82,31 @@ function drawStroke(x,y,t){
  ctx.moveTo(lastX,lastY);
  ctx.lineTo(x,y);
  ctx.lineCap="round";
- ctx.lineWidth=(t==="erase")?30:4;
-
- if(t==="erase"){
-   ctx.globalCompositeOperation="destination-out";
- }else{
-   ctx.globalCompositeOperation="source-over";
-   ctx.strokeStyle="white";
- }
-
+ ctx.lineWidth=4;
+ ctx.strokeStyle="white";
  ctx.stroke();
 
  lastX=x;
  lastY=y;
 }
 
-function send(x,y,t){
- push(strokesRef,{
-  x:x,
-  y:y,
-  tool:t
- });
+function send(x,y){
+ push(strokesRef,{x,y});
 }
 
 onChildAdded(strokesRef,(snap)=>{
  let d=snap.val();
- drawStroke(d.x,d.y,d.tool);
+ drawStroke(d.x,d.y);
 });
+
+onValue(clearRef,()=>{
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+});
+
+document.getElementById("clearBtn").onclick=()=>{
+ remove(strokesRef);
+ push(clearRef,{time:Date.now()});
+};
 
 canvas.addEventListener("touchstart",()=>{
  drawing=true;
@@ -129,8 +127,8 @@ canvas.addEventListener("touchmove",(e)=>{
  let x=e.touches[0].clientX-rect.left;
  let y=e.touches[0].clientY-rect.top;
 
- drawStroke(x,y,tool);
- send(x,y,tool);
+ drawStroke(x,y);
+ send(x,y);
 });
 
 </script>
