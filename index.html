@@ -1,155 +1,121 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BoardChat - Live Sketch</title>
-    <script src="https://cdn.jsdelivr.net"></script>
-    <style>
-        /* Force app to stay on one screen with no scrolling/zooming */
-        html, body { 
-            position: fixed; 
-            width: 100%; 
-            height: 100%; 
-            overflow: hidden; 
-            margin: 0; 
-            background: #000;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        }
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BoardChat</title>
 
-        #toolbar {
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            display: flex; gap: 8px; background: rgba(0,0,0,0.8);
-            padding: 8px 20px; border-radius: 50px; z-index: 999;
-            border: 1px solid rgba(255,255,255,0.2);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-
-        button { padding: 12px 20px; border: none; border-radius: 25px; background: #fff; font-weight: bold; cursor: pointer; }
-        button.active { background: #007AFF; color: white; }
-
-        canvas { 
-            display: block; 
-            background: #fff; 
-            touch-action: none; /* CRITICAL FIX: Disable all browser gestures */
-            z-index: 1;
-        }
-    </style>
+<style>
+body{
+ margin:0;
+ background:#111;
+ overflow:hidden;
+ touch-action:none;
+}
+canvas{
+ background:black;
+ display:block;
+}
+#toolbar{
+ position:fixed;
+ top:10px;
+ left:50%;
+ transform:translateX(-50%);
+ z-index:10;
+}
+button{
+ font-size:16px;
+ padding:10px;
+ margin:3px;
+ border:none;
+ border-radius:8px;
+}
+</style>
 </head>
+
 <body>
 
-    <div id="toolbar">
-        <button id="drawBtn" class="active">Pen</button>
-        <button id="eraseBtn">Eraser</button>
-        <button onclick="clearBoard()" style="background: #ff3b30; color: white;">Clear</button>
-    </div>
+<div id="toolbar">
+<button onclick="tool='draw'">✏️ Pencil</button>
+<button onclick="tool='erase'">🧽 Eraser</button>
+</div>
 
-    <canvas id="sketchBoard"></canvas>
+<canvas id="board"></canvas>
 
-    <script>
-        // --- 1. SUPABASE CONNECTION ---
-        const SB_URL = 'https://sujawkmwxhdqoaadyewh.supabase.co';
-        const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN1amF3a213eGhkcW9hYWR5ZXdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzNTkxMTUsImV4cCI6MjA4NTkzNTExNX0.Yy2D63Vshq5PgH-IPOADRW-ShWcPaXZ4G-6VjOT7VIg';
-        const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
-        // Using a dedicated channel name for robust sync
-        const channel = supabaseClient.channel('boardchat-live-channel');
+<script type="module">
 
-        // --- 2. CANVAS SETUP ---
-        const canvas = document.getElementById('sketchBoard');
-        const ctx = canvas.getContext('2d');
-        let isDrawing = false, mode = 'draw';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+import { getDatabase, ref, push, onChildAdded } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
 
-        function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.lineWidth = 5;
-        }
-        window.addEventListener('resize', resize);
-        resize();
+const firebaseConfig = {
+ apiKey: "AIzaSyD_irdW_k6Hmp7PLzP9j7rKgWks9yya8xo",
+ authDomain: "boardchat-e9cfb.firebaseapp.com",
+ databaseURL: "https://boardchat-e9cfb-default-rtdb.asia-southeast1.firebasedatabase.app",
+ projectId: "boardchat-e9cfb",
+ storageBucket: "boardchat-e9cfb.firebasestorage.app",
+ messagingSenderId: "934254339524",
+ appId: "1:934254339524:web:4abd1c01064be680b57091"
+};
 
-        // --- 3. UI CONTROLS ---
-        document.getElementById('drawBtn').onclick = () => { mode = 'draw'; updateUI(); };
-        document.getElementById('eraseBtn').onclick = () => { mode = 'erase'; updateUI(); };
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const strokesRef = ref(db,"board");
 
-        function updateUI() {
-            document.getElementById('drawBtn').className = mode === 'draw' ? 'active' : '';
-            document.getElementById('eraseBtn').className = mode === 'erase' ? 'active' : '';
-        }
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
 
-        // --- 4. DRAWING LOGIC (Mobile Optimized) ---
-        function getPos(e) {
-            const t = e.touches ? e.touches[0] : e; // Use the first touch if multiple
-            const rect = canvas.getBoundingClientRect();
-            return {
-                x: (t.clientX - rect.left) / canvas.width,
-                y: (t.clientY - rect.top) / canvas.height
-            };
-        }
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-        function drawLine(x, y, m, start) {
-            const rx = x * canvas.width, ry = y * canvas.height;
-            ctx.lineWidth = m === 'draw' ? 5 : 40;
-            ctx.globalCompositeOperation = m === 'draw' ? 'source-over' : 'destination-out';
-            ctx.strokeStyle = '#000';
+let drawing=false;
+let tool="draw";
 
-            if (start) ctx.beginPath();
-            ctx.lineTo(rx, ry);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(rx, ry);
-        }
+function drawStroke(x,y,t){
 
-        const handleStart = (e) => {
-            e.preventDefault(); // Stop mobile scrolling
-            isDrawing = true;
-            const p = getPos(e);
-            ctx.beginPath(); // Ensure a fresh line starts here
-            sync(p.x, p.y, mode, true);
-        };
+ if(t==="erase"){
+   ctx.globalCompositeOperation="destination-out";
+   ctx.beginPath();
+   ctx.arc(x,y,15,0,Math.PI*2);
+   ctx.fill();
+ }else{
+   ctx.globalCompositeOperation="source-over";
+   ctx.fillStyle="white";
+   ctx.fillRect(x,y,4,4);
+ }
 
-        const handleMove = (e) => {
-            if(!isDrawing) return;
-            e.preventDefault(); // Stop mobile scrolling
-            const p = getPos(e);
-            
-            ctx.lineWidth = mode === 'draw' ? 5 : 40;
-            ctx.globalCompositeOperation = mode === 'draw' ? 'source-over' : 'destination-out';
-            ctx.strokeStyle = '#000';
-            ctx.lineTo(p.x * canvas.width, p.y * canvas.height);
-            ctx.stroke();
-            sync(p.x, p.y, mode, false);
-        };
+}
 
-        const handleEnd = () => { isDrawing = false; ctx.beginPath(); };
+function send(x,y,t){
+ push(strokesRef,{
+  x:x,
+  y:y,
+  tool:t
+ });
+}
 
-        // --- 5. REALTIME SYNC ---
-        function sync(x, y, m, s) {
-            channel.send({ type: 'broadcast', event: 'stroke', payload: { x, y, m, s } });
-        }
+onChildAdded(strokesRef,(snap)=>{
+ let d=snap.val();
+ drawStroke(d.x,d.y,d.tool);
+});
 
-        channel.on('broadcast', { event: 'stroke' }, ({ payload }) => {
-            drawLine(payload.x, payload.y, payload.m, payload.s);
-        }).on('broadcast', { event: 'clear' }, () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }).subscribe();
+canvas.addEventListener("touchstart",()=>{
+ drawing=true;
+});
 
-        function clearBoard() {
-            if(confirm("Clear board for everyone?")) {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                channel.send({ type: 'broadcast', event: 'clear' });
-            }
-        }
+canvas.addEventListener("touchend",()=>{
+ drawing=false;
+});
 
-        // --- 6. EVENT LISTENERS ---
-        // {passive: false} is crucial for mobile drawing performance
-        canvas.addEventListener('touchstart', handleStart, {passive: false});
-        canvas.addEventListener('touchmove', handleMove, {passive: false});
-        canvas.addEventListener('touchend', handleEnd);
-        canvas.addEventListener('mousedown', handleStart);
-        canvas.addEventListener('mousemove', handleMove);
-        canvas.addEventListener('mouseup', handleEnd);
-    </script>
+canvas.addEventListener("touchmove",(e)=>{
+ if(!drawing)return;
+ let rect=canvas.getBoundingClientRect();
+ let x=e.touches[0].clientX-rect.left;
+ let y=e.touches[0].clientY-rect.top;
+
+ drawStroke(x,y,tool);
+ send(x,y,tool);
+});
+
+</script>
+
 </body>
 </html>
